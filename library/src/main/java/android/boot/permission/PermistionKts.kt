@@ -1,7 +1,7 @@
 package android.boot.permission
 
 import android.app.Activity
-import android.content.Context
+import android.boot.permission.PermissionSetup.runtimeExplainMap
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -14,17 +14,17 @@ import com.karumi.dexter.listener.multi.MultiplePermissionsListener
 
 
 class PermissionScope(
-    private val host: Context,
-    private val permissions: Array<out String>,
-    private val openSettingsOnDeniedPermanently: Boolean = true,
-    private val explains: Map<String, String> = emptyMap()
+    private val host: Activity,
+    private val permissions: Array<out String>
 ) {
+
     private var allGranted: (permissions: List<String>) -> Unit = {}
-    private var denied: (permissions: List<String>) -> Unit = {}
-    private var permanentlyDeny: (permissions: List<String>) -> Unit = {}
+    private var denied: (permissions: List<String>) -> Unit = { }
+    private var permanentlyDeny: (permissions: List<String>) -> Unit = { }
 
     private val multiPermissionListener = object : MultiplePermissionsListener {
         override fun onPermissionsChecked(report: MultiplePermissionsReport?) {
+
             if (report?.areAllPermissionsGranted() == true) {
                 allGranted(report.grantedPermissionResponses?.map { it.permissionName }
                     ?: emptyList())
@@ -33,14 +33,23 @@ class PermissionScope(
 
             if (report?.isAnyPermissionPermanentlyDenied == true) {
                 // permission is denied permanently, we will show user a dialog message.
-                if (openSettingsOnDeniedPermanently) showSettingDialog() else permanentlyDeny(
-                    emptyList()
-                )
+                val deniedPermissions =
+                    report.deniedPermissionResponses?.filter { it.isPermanentlyDenied }
+                        ?.map { it.permissionName } ?: emptyList()
+                if (guideToSettingsOnPermanentlyDeny) {
+                    permanentlyDeniedExplanation?.onExplain(host, onContinue = { openSettings() }) {
+                        permanentlyDeny(deniedPermissions)
+                    } ?: showSettingDialog(permissions = deniedPermissions) {
+                        permanentlyDeny(deniedPermissions)
+                    }
+
+                } else permanentlyDeny(deniedPermissions)
                 return
             }
 
             if (!report?.deniedPermissionResponses.isNullOrEmpty()) {
-                denied(report?.deniedPermissionResponses?.map { it.permissionName } ?: emptyList())
+                denied(report?.deniedPermissionResponses?.map { it.permissionName }
+                    ?: emptyList())
             }
         }
 
@@ -48,10 +57,18 @@ class PermissionScope(
             requests: MutableList<PermissionRequest>?,
             token: PermissionToken?
         ) {
-            token?.continuePermissionRequest();
+            permissionExplanation ?: runtimeExplainMap[permissions.asList()]?.let {
+                it.onExplain(
+                    host,
+                    onContinue = { token?.continuePermissionRequest() }) { token?.cancelPermissionRequest() }
+            } ?: token?.continuePermissionRequest()
         }
     }
 
+    var guideToSettingsOnPermanentlyDeny: Boolean = true
+
+    var permissionExplanation: PermissionExplanation? = null
+    var permanentlyDeniedExplanation: PermanentlyDeniedExplanation? = null
 
     fun onAllGranted(action: (permissions: List<String>) -> Unit = {}) {
         allGranted = action
@@ -61,7 +78,7 @@ class PermissionScope(
         denied = action
     }
 
-    fun onPermanentlyDeny(action: (permissions: List<String>) -> Unit = {}) {
+    fun onPermanentlyDeny(action: (permissions: List<String>) -> Unit = { }) {
         permanentlyDeny = action
     }
 
@@ -74,9 +91,12 @@ class PermissionScope(
 
     private fun showSettingDialog(
         title: String? = null,
-        permissions: List<String> = emptyList()
+        permissions: List<String> = emptyList(),
+        onCancel: () -> Unit = {}
     ) {
-        MaterialAlertDialogBuilder(host).setTitle(title ?: "请手动授予部分权限").setMessage("")
+        MaterialAlertDialogBuilder(host)
+            .setCancelable(false)
+            .setTitle(title ?: "您已拒绝必要权限,请手动授予").setMessage("")
             .setPositiveButton(
                 "去设置"
             ) { dialog, _ ->
@@ -84,6 +104,7 @@ class PermissionScope(
                 openSettings()
             }.setNegativeButton("取消") { dialog, _ ->
                 dialog.dismiss()
+                onCancel()
             }.show()
     }
 
@@ -91,9 +112,6 @@ class PermissionScope(
         runCatching {
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).run {
                 setData(Uri.fromParts("package", host.packageName, null))
-                if (host !is Activity) {
-                    setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
                 host.startActivity(this)
             }
         }
@@ -101,10 +119,9 @@ class PermissionScope(
 }
 
 
-fun Context.withPermission(
+fun Activity.withPermission(
     vararg permissions: String,
-    openSettingsOnDeniedPermanently: Boolean = true,
     block: PermissionScope.() -> Unit
 ) {
-    PermissionScope(this, permissions, openSettingsOnDeniedPermanently).apply(block).request()
+    PermissionScope(this, permissions).apply(block).request()
 }
