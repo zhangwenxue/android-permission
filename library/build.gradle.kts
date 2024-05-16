@@ -12,9 +12,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        minSdk = 24
-        targetSdk = 34
-
+        minSdk = 23
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -60,7 +58,7 @@ mavenPublishing {
         )
     )
 
-    coordinates("io.github.zhangwenxue", "permission", "1.0.0")
+    coordinates("io.github.zhangwenxue", "permission", "1.0.1-alpha1")
 
     pom {
         name.set("Android-Permission")
@@ -89,3 +87,5 @@ mavenPublishing {
     }
     signAllPublications()
 }
+
+// publish maven release: ./gradlew publishAndReleaseToMavenCentral --no-configuration-cache
